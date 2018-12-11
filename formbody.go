@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/textproto"
 	"os"
 	"sort"
@@ -60,11 +59,6 @@ func NewFormBody() *FormBody {
 		boundary: randomBoundary(),
 	}
 	return b
-}
-
-func (w *FormBody) Print() {
-	bs, err := ioutil.ReadAll(w)
-	fmt.Println(string(bs), err)
 }
 
 func (w *FormBody) Read(p []byte) (n int, err error) {

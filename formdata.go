@@ -11,7 +11,10 @@ import (
 	"io/ioutil"
 	"net/textproto"
 	"os"
+	"path/filepath"
 )
+
+var TempFilePath = ""
 
 // ErrMessageTooLarge is returned by ReadForm if the message form
 // data is too large to be processed.
@@ -83,7 +86,7 @@ func (r *Reader) readForm(maxMemory int64) (_ *Form, err error) {
 		}
 		if n > maxMemory {
 			// too big, write to disk and flush buffer
-			file, err := ioutil.TempFile("", "multipart-")
+			file, err := ioutil.TempFile(TempFilePath, "multipart-")
 			if err != nil {
 				return nil, err
 			}
@@ -117,6 +120,24 @@ func (r *Reader) readForm(maxMemory int64) (_ *Form, err error) {
 type Form struct {
 	Value map[string][]string
 	File  map[string][]*FileHeader
+}
+
+func (f *Form) SaveToFile(field, dir string, specialName ...string) error {
+	fs, _ := f.File[field]
+	if len(fs) == 0 {
+		return errors.New("field not exists")
+	}
+	name := fs[0].Filename
+	if len(specialName) != 0 {
+		name = specialName[0]
+	}
+	if name == "" {
+		return errors.New("file name is empty")
+	}
+	if fs[0].content != nil {
+		return ioutil.WriteFile(filepath.Join(dir, name), fs[0].content, 0644)
+	}
+	return os.Rename(fs[0].tmpfile, filepath.Join(dir, name))
 }
 
 // RemoveAll removes any temporary files associated with a Form.
