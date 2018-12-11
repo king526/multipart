@@ -96,6 +96,7 @@ func (w *FormBody) CreateFromByPath(fieldname, filename, filePath string) error 
 	return w.CreateFromReader(fieldname, filename, fd)
 }
 
+// CreateFromReader use ioutil.NopCloser(rd) for Reader or do not want to close .
 func (w *FormBody) CreateFromReader(fieldname, filename string, rd io.ReadCloser) error {
 	if _, err := w.CreateFormFile(fieldname, filename); err != nil {
 		return err
