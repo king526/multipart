@@ -6,9 +6,10 @@ package multipart_test
 
 import (
 	"fmt"
+	"io/ioutil"
 	"testing"
 
-	"cindasoft.com/library/multipart"
+	"github.com/king526/multipart"
 )
 
 func Test_1(t *testing.T) {
@@ -18,5 +19,6 @@ func Test_1(t *testing.T) {
 	fmt.Println(b.CreateFromByPath("f4", "f44", "example_test.go"))
 	fmt.Println(b.WriteField("f3", "v3"))
 
-	b.Print()
+	bs, err := ioutil.ReadAll(b)
+	t.Log(err, string(bs))
 }

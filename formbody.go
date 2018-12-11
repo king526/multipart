@@ -9,48 +9,11 @@ import (
 	"sort"
 )
 
-type eofReader struct{}
-
-func (eofReader) Read([]byte) (int, error) {
-	return 0, io.EOF
-}
-
-type multiReader struct {
-	readers []io.Reader
-}
-
-func (mr *multiReader) Read(p []byte) (n int, err error) {
-	for len(mr.readers) > 0 {
-		// Optimization to flatten nested multiReaders (Issue 13558).
-		if len(mr.readers) == 1 {
-			if r, ok := mr.readers[0].(*multiReader); ok {
-				mr.readers = r.readers
-				continue
-			}
-		}
-		n, err = mr.readers[0].Read(p)
-		if err == io.EOF {
-			// Use eofReader instead of nil to avoid nil panic
-			// after performing flatten (Issue 18232).
-			mr.readers[0] = eofReader{} // permit earlier GC
-			mr.readers = mr.readers[1:]
-		}
-		if n > 0 || err != io.EOF {
-			if err == io.EOF && len(mr.readers) > 0 {
-				// Don't return EOF yet. More readers remain.
-				err = nil
-			}
-			return
-		}
-	}
-	return 0, io.EOF
-}
-
 type FormBody struct {
 	boundary string
 	b        *bytes.Buffer
-	items    []io.Reader
-	reader   *multiReader
+	mr       multiReader
+	closed   bool
 }
 
 func NewFormBody() *FormBody {
@@ -62,15 +25,13 @@ func NewFormBody() *FormBody {
 }
 
 func (w *FormBody) Read(p []byte) (n int, err error) {
-	if len(w.items) == 0 {
+	if len(w.mr.readers) == 0 {
 		return 0, io.EOF
 	}
-	if w.reader == nil {
-		fmt.Fprintf(w.b, "\r\n--%s--\r\n", w.boundary)
-		w.items = append(w.items, w.b)
-		w.reader = &multiReader{w.items}
+	if !w.closed {
+		w.Close()
 	}
-	return w.reader.Read(p)
+	return w.mr.Read(p)
 }
 
 // Boundary returns the Writer's boundary.
@@ -83,7 +44,11 @@ func (w *FormBody) FormDataContentType() string {
 }
 
 func (w *FormBody) Close() error {
-	//fmt.Fprintf(w.w, "\r\n--%s--\r\n", w.boundary)
+	if !w.closed {
+		w.closed = true
+		fmt.Fprintf(w.b, "\r\n--%s--\r\n", w.boundary)
+		w.mr.readers = append(w.mr.readers, w.b)
+	}
 	return nil
 }
 
@@ -91,7 +56,7 @@ func (f *FormBody) getPart() bool {
 	if f.b.Len() != 0 {
 		raw := make([]byte, f.b.Len())
 		copy(raw, f.b.Bytes())
-		f.items = append(f.items, bytes.NewReader(raw))
+		f.mr.readers = append(f.mr.readers, bytes.NewReader(raw))
 		f.b.Reset()
 		return true
 	}
@@ -99,6 +64,9 @@ func (f *FormBody) getPart() bool {
 }
 
 func (f *FormBody) CreatePart(header textproto.MIMEHeader) (io.Writer, error) {
+	if f.closed {
+		return nil, fmt.Errorf("Closed")
+	}
 	if f.getPart() {
 		fmt.Fprintf(f.b, "\r\n--%s\r\n", f.boundary)
 	} else {
@@ -132,7 +100,7 @@ func (w *FormBody) CreateFromReader(fieldname, filename string, rd io.ReadCloser
 	if _, err := w.CreateFormFile(fieldname, filename); err != nil {
 		return err
 	}
-	w.items = append(w.items, rd)
+	w.mr.readers = append(w.mr.readers, rd)
 	return nil
 }
 
@@ -162,4 +130,44 @@ func (w *FormBody) WriteField(fieldname, value string) error {
 	}
 	_, err = p.Write([]byte(value))
 	return err
+}
+
+type eofReader struct{}
+
+func (eofReader) Read([]byte) (int, error) {
+	return 0, io.EOF
+}
+
+type multiReader struct {
+	readers []io.Reader
+}
+
+func (mr *multiReader) Read(p []byte) (n int, err error) {
+	for len(mr.readers) > 0 {
+		// Optimization to flatten nested multiReaders (Issue 13558).
+		if len(mr.readers) == 1 {
+			if r, ok := mr.readers[0].(*multiReader); ok {
+				mr.readers = r.readers
+				continue
+			}
+		}
+		n, err = mr.readers[0].Read(p)
+		if err == io.EOF {
+			if closer, ok := mr.readers[0].(io.Closer); ok {
+				closer.Close()
+			}
+			// Use eofReader instead of nil to avoid nil panic
+			// after performing flatten (Issue 18232).
+			mr.readers[0] = eofReader{} // permit earlier GC
+			mr.readers = mr.readers[1:]
+		}
+		if n > 0 || err != io.EOF {
+			if err == io.EOF && len(mr.readers) > 0 {
+				// Don't return EOF yet. More readers remain.
+				err = nil
+			}
+			return
+		}
+	}
+	return 0, io.EOF
 }
